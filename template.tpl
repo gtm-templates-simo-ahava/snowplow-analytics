@@ -10,9 +10,11 @@ ___INFO___
 
 {
   "displayName": "Snowplow Analytics",
-  "description": "Pageviews, Structured events, and Self-describing events.",
+  "description": "Load, configure, and deploy the Snowplow Analytics JavaScript tracker library. It supports the full functionality of the JavaScript SDK.",
   "securityGroups": [],
-  "categories": ["ANALYTICS"],
+  "categories": [
+    "ANALYTICS"
+  ],
   "id": "cvt_temp_public_id",
   "type": "TAG",
   "version": 1,
