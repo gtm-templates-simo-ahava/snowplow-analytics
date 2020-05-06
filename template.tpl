@@ -1289,6 +1289,18 @@ ___TEMPLATE_PARAMETERS___
           {
             "value": "enableGdprContext",
             "displayValue": "enableGdprContext"
+          },
+          {
+            "value": "addGlobalContexts",
+            "displayValue": "addGlobalContexts"
+          },
+          {
+            "value": "removeGlobalContexts",
+            "displayValue": "removeGlobalContexts"
+          },
+          {
+            "value": "clearGlobalContexts",
+            "displayValue": "clearGlobalContexts"
           }
         ],
         "displayName": "Command name",
@@ -1330,7 +1342,7 @@ ___TEMPLATE_PARAMETERS___
             "paramValue": "setCountPreRendered"
           },
           {
-            "paramName": "customCovmmand",
+            "paramName": "customCommand",
             "type": "EQUALS",
             "paramValue": "setReferrerUrl"
           },
@@ -1347,6 +1359,16 @@ ___TEMPLATE_PARAMETERS___
           {
             "paramName": "customCommand",
             "paramValue": "enableGdprContext",
+            "type": "EQUALS"
+          },
+          {
+            "paramName": "customCommand",
+            "paramValue": "addGlobalContexts",
+            "type": "EQUALS"
+          },
+          {
+            "paramName": "customCommand",
+            "paramValue": "removeGlobalContexts",
             "type": "EQUALS"
           }
         ],
@@ -1638,9 +1660,9 @@ const getTrackerConfiguration = () => {
   if (data.trackerConfigurationVariable !== 'select' && data.trackerConfigurationVariable.type !== 'snowplow') {
     return false;
   }
-  // Fail if no parameters added
+  // Return if no parameters added
   if (data.trackerConfigurationVariable === 'select' && (!data.overridingSettings || !data.overridingSettings.length)) {
-    return false;
+    return {};
   }
   
   // Set the configuration to the variable return object
@@ -1694,7 +1716,7 @@ if (copyFromWindow(trackerListGlobalName).indexOf(trackerName) === -1) {
 }
 
 // If using event parameter variable, require the variable to return an object
-if (data.paramsFromVariable && data.paramsFromVariable !== 'no' && getType(data.paramsFromVariable) !== 'object') fail('Parameter variable must return an object.');
+if (data.paramsFromVariable && data.paramsFromVariable !== 'no' && getType(data.paramsFromVariable) !== 'object') return fail('Parameter variable must return an object.');
 let paramObj;
 if (data.paramsFromVariable && data.paramsFromVariable !== 'no') {
   paramObj = data.paramsFromVariable;
@@ -2029,6 +2051,13 @@ switch (data.eventType) {
         parts.unshift('enableGdprContext');
         parts.forEach(p => args.push(p));
         break;
+      case 'addGlobalContexts':
+      case 'removeGlobalContexts':
+        args.push(
+          data.customCommand,
+          getType(data.customCommandArg) !== 'array' ? [data.customCommandArg] : data.customCommandArg
+        );
+        break;
       case 'setUserId':
       case 'setUserIdFromLocation':
       case 'setUserIdFromReferrer':
@@ -2052,6 +2081,7 @@ args[0] = args[0] + ':' + trackerName;
 
 // Add custom contexts
 args.push(data.customContexts !== 'no' && getType(data.customContexts) === 'array' ? data.customContexts : null);
+
 if (data.eventType === 'trackPageView') {
   args.push(data.pageViewPageContextFunction !== 'no' && getType(data.pageViewPageContextFunction) === 'function' ? data.pageViewPageContextFunction : null);
 }
@@ -2062,8 +2092,7 @@ if (data.trueTimestamp) args.push({type: 'ttm', value: data.trueTimestamp});
 // Execute the command and arguments
 callInWindow(globalName + '.apply', null, args);
 
-data.gtmOnSuccess();
-//injectScript(libUrl, data.gtmOnSuccess, data.gtmOnFailure, 'splibrary');
+injectScript(libUrl, data.gtmOnSuccess, data.gtmOnFailure, 'splibrary');
 
 
 ___WEB_PERMISSIONS___
@@ -2400,7 +2429,209 @@ ___WEB_PERMISSIONS___
 
 ___TESTS___
 
-scenarios: []
+scenarios:
+- name: Initiates global queue
+  code: |-
+    let firstTry = true;
+    mock('copyFromWindow', key => {
+      if (key === mockData.globalName && firstTry) {
+        firstTry = false;
+        return;
+      }
+      if (key === mockData.globalName) {
+        return () => {};
+      }
+      if (key === '_snowplow_trackers') return [];
+    });
+
+    mock('createQueue', key => {
+      return () => {};
+    });
+
+    // Call runCode to run the template's code.
+    runCode(mockData);
+
+    // Verify that the tag finished successfully.
+    assertApi('createQueue').wasCalledWith('GlobalSnowplowNamespace');
+    assertApi('createQueue').wasCalledWith('snowplow.q');
+    assertApi('setInWindow').wasCalled();
+    assertApi('gtmOnSuccess').wasCalled();
+- name: Doesn't initiate global queue if already initiated
+  code: |-
+    mock('copyFromWindow', key => {
+      if (key === mockData.globalName) {
+        return () => {};
+      }
+      if (key === '_snowplow_trackers') return [];
+    });
+
+    // Call runCode to run the template's code.
+    runCode(mockData);
+
+    // Verify that the tag finished successfully.
+    assertApi('createQueue').wasCalledWith('_snowplow_trackers');
+    assertApi('createQueue').wasNotCalledWith('snowplow.q');
+    assertApi('setInWindow').wasNotCalled();
+    assertApi('gtmOnSuccess').wasCalled();
+- name: Creates a new tracker
+  code: "let trackerCreated = false;\nmock('copyFromWindow', key => {\n  if (key ===\
+    \ mockData.globalName) {\n    return function() {\n      if (arguments[0] ===\
+    \ 'newTracker') {\n        assertThat(arguments[1], 'Incorrect tracker name').isEqualTo(mockData.trackerName);\n\
+    \        assertThat(arguments[2], 'Incorrect collector endpoint').isEqualTo(mockData.collectorEndpoint);\n\
+    \        assertThat(arguments[3], 'Incorrect config object').isEqualTo({});\n\
+    \        trackerCreated = true;\n      }  \n    };\n  }\n  if (key === '_snowplow_trackers')\
+    \ return [];\n});\n\n// Call runCode to run the template's code.\nrunCode(mockData);\n\
+    \n// Verify that the tag finished successfully.\nassertThat(trackerCreated, 'New\
+    \ tracker not created').isEqualTo(true);\nassertApi('gtmOnSuccess').wasCalled();"
+- name: Uses existing tracker
+  code: "mock('copyFromWindow', key => {\n  if (key === mockData.globalName) {\n \
+    \   return function() {\n      assertThat(arguments[0], 'New tracker created even\
+    \ though it already existed').isNotEqualTo('newTracker');  \n    };\n  }\n  if\
+    \ (key === '_snowplow_trackers') return [mockData.trackerName];\n});\n\n// Call\
+    \ runCode to run the template's code.\nrunCode(mockData);\n\n// Verify that the\
+    \ tag finished successfully.\nassertApi('gtmOnSuccess').wasCalled();"
+- name: Tracker configuration loaded from variable
+  code: "mockData.trackerConfigurationVariable = {appId: 'test', type: 'snowplow'};\n\
+    mock('copyFromWindow', key => {\n  if (key === mockData.globalName) {\n    return\
+    \ function() {\n      if (arguments[0] === 'newTracker') {\n        assertThat(arguments[3],\
+    \ 'Incorrect config object').isEqualTo(mockData.trackerConfigurationVariable);\n\
+    \      }  \n    };\n  }\n  if (key === '_snowplow_trackers') return [];\n});\n\
+    \n// Call runCode to run the template's code.\nrunCode(mockData);\n\n// Verify\
+    \ that the tag finished successfully.\nassertApi('gtmOnSuccess').wasCalled();"
+- name: Tracker configuration not loaded if incorrect variable
+  code: |-
+    mockData.trackerConfigurationVariable = {appId: 'test', type: 'notSnowplow'};
+    mock('copyFromWindow', key => {
+      if (key === mockData.globalName) {
+        return function() {};
+      }
+      if (key === '_snowplow_trackers') return [];
+    });
+
+    // Call runCode to run the template's code.
+    runCode(mockData);
+
+    // Verify that the tag finished successfully.
+    assertApi('gtmOnFailure').wasCalled();
+- name: Tracker configuration loaded from parameters, overrides variable
+  code: "mockData.trackerConfigurationVariable = {appId: 'test', type: 'snowplow',\
+    \ platform: 'ios'};\nmockData.overridingSettings = [{name: 'platform', value:\
+    \ 'web'}];\nmock('copyFromWindow', key => {\n  if (key === mockData.globalName)\
+    \ {\n    return function() {\n      if (arguments[0] === 'newTracker') {\n   \
+    \     assertThat(arguments[3], 'Variable config not overridden').isEqualTo({appId:\
+    \ 'test', type: 'snowplow', platform: 'web'});\n      }  \n    };\n  }\n  if (key\
+    \ === '_snowplow_trackers') return [];\n});\n\n// Call runCode to run the template's\
+    \ code.\nrunCode(mockData);\n\n// Verify that the tag finished successfully.\n\
+    assertApi('gtmOnSuccess').wasCalled();"
+- name: Hit sent with params from variable
+  code: |-
+    mockData.eventType = 'adTracking';
+    mockData.paramsFromVariable = {impressionId: 'test'};
+    mockData.adTrackingType = 'trackAdImpression';
+
+    mock('copyFromWindow', key => {
+      if (key === mockData.globalName) {
+        return () => {};
+      }
+      if (key === '_snowplow_trackers') return [mockData.trackerName];
+    });
+
+    mock('callInWindow', (arg1, arg2, arg3) => {
+      assertThat(arg1, 'Invalid argument to callInWindow').isEqualTo(mockData.globalName + '.apply');
+      assertThat(arg3[0], 'Invalid argument to callInWindow').isEqualTo(mockData.adTrackingType + ':' + mockData.trackerName);
+      assertThat(arg3[1], 'Invalid argument to callInWindow').isEqualTo('test');
+    });
+
+    // Call runCode to run the template's code.
+    runCode(mockData);
+
+    // Verify that the tag finished successfully.
+    assertApi('gtmOnSuccess').wasCalled();
+- name: Hit sent with params from table
+  code: |-
+    mockData.eventType = 'adTracking';
+    mockData.paramsFromVariable = 'no';
+    mockData.adTrackingParams = [{name: 'impressionId', value: 'test'}];
+    mockData.adTrackingType = 'trackAdImpression';
+
+    mock('copyFromWindow', key => {
+      if (key === mockData.globalName) {
+        return () => {};
+      }
+      if (key === '_snowplow_trackers') return [mockData.trackerName];
+    });
+
+    mock('callInWindow', (arg1, arg2, arg3) => {
+      assertThat(arg1, 'Invalid argument to callInWindow').isEqualTo(mockData.globalName + '.apply');
+      assertThat(arg3[0], 'Invalid command in args object').isEqualTo(mockData.adTrackingType + ':' + mockData.trackerName);
+      assertThat(arg3[1], 'Invalid first argument to command in args object').isEqualTo('test');
+    });
+
+    // Call runCode to run the template's code.
+    runCode(mockData);
+
+    // Verify that the tag finished successfully.
+    assertApi('gtmOnSuccess').wasCalled();
+- name: Custom command called with arguments
+  code: |-
+    mockData.eventType = 'customCommand';
+    mockData.customCommand = 'addGlobalContexts';
+    mockData.customCommandArg = ['test'];
+
+    mock('copyFromWindow', key => {
+      if (key === mockData.globalName) {
+        return () => {};
+      }
+      if (key === '_snowplow_trackers') return [mockData.trackerName];
+    });
+
+    mock('callInWindow', (arg1, arg2, arg3) => {
+      assertThat(arg1, 'Invalid argument to callInWindow').isEqualTo(mockData.globalName + '.apply');
+      assertThat(arg3[0], 'Invalid command in args object').isEqualTo(mockData.customCommand + ':' + mockData.trackerName);
+      assertThat(arg3[1], 'Invalid first argument to command in args object').isEqualTo(mockData.customCommandArg);
+    });
+
+    // Call runCode to run the template's code.
+    runCode(mockData);
+
+    // Verify that the tag finished successfully.
+    assertApi('gtmOnSuccess').wasCalled();
+- name: Context added to hit
+  code: |-
+    mockData.eventType = 'trackPageView';
+    mockData.pageViewPageTitle = 'test';
+    mockData.pageViewPageContextFunction = () => {};
+    mockData.customContexts = ['test'];
+    mockData.trueTimestamp = 123;
+
+    mock('copyFromWindow', key => {
+      if (key === mockData.globalName) {
+        return () => {};
+      }
+      if (key === '_snowplow_trackers') return [mockData.trackerName];
+    });
+
+    mock('callInWindow', (arg1, arg2, arg3) => {
+      assertThat(arg1, 'Invalid argument to callInWindow').isEqualTo(mockData.globalName + '.apply');
+      assertThat(arg3[0], 'Invalid command in args object').isEqualTo(mockData.eventType + ':' + mockData.trackerName);
+      assertThat(arg3[1], 'Invalid page title').isEqualTo(mockData.pageViewPageTitle);
+      assertThat(arg3[2], 'Invalid context object').isEqualTo(mockData.customContexts);
+      assertThat(arg3[3], 'Invalid context function').isEqualTo(mockData.pageViewPageContextFunction);
+      assertThat(arg3[4], 'Invalid timestamp object').isEqualTo({type: 'ttm', value: mockData.trueTimestamp});
+    });
+
+    // Call runCode to run the template's code.
+    runCode(mockData);
+
+    // Verify that the tag finished successfully.
+    assertApi('gtmOnSuccess').wasCalled();
+setup: "const log = require('logToConsole');\n\nconst mockData = {\n  trackerName:\
+  \ 'spTracker',\n  selfHostedUrl: 'https://github.com/snowplow/snowplow-javascript-tracker/releases/download/2.14.0/sp.js',\n\
+  \  globalName: 'snowplow',\n  collectorEndpoint: 'test.domain',\n  trackerConfigurationVariable:\
+  \ 'select',\n  overridingSettings: []\n};\n\nlet success, failure;\nmock('injectScript',\
+  \ (url, onsuccess, onfailure) => {\n  success = onsuccess;\n  failure = onfailure;\n\
+  \  if (url === mockData.selfHostedUrl) {\n    onsuccess();\n  } else {\n    onfailure();\n\
+  \  }\n  return;\n});\n     "
 
 
 ___NOTES___
